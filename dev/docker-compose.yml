@@ -1,0 +1,55 @@
+version: '3.7'
+
+services:
+
+  standalone:
+    image: ghcr.io/ncar/ldap-sam-syncd:latest
+    command: /bin/bash
+    volumes:
+      - type: bind
+        source: ${LOCAL_BASE}/ldap-sam-syncd
+        target: /usr/local/ldap-sam-syncd
+      - type: bind
+        source: ${LOCAL_BASE}/sweet
+        target: /usr/local/sweet
+      - type: bind
+        read_only: true
+        source: ${LOCAL_SECRETS}
+        target: ${SECRETS_VOL}
+      - type: bind
+        source: ${LOCAL_BASE}/ldap-sam-syncd/dev/config
+        target: ${CONFIG_VOL}
+      - type: bind
+        source: ${LOCAL_BASE}/ldap-sam-syncd/dev/data
+        target: ${DATA_VOL}
+      - type: tmpfs
+        target: /tmp
+    stdin_open: true
+    tty: true
+    env_file: .env
+    environment:
+      SERVICE: standalone
+      VISUAL: ${VISUAL}
+      EDITOR: ${EDITOR}
+    profiles: [ "standalone" ]
+
+  lsyncd:
+    image: ghcr.io/ncar/acct-sam-etl:latest
+    command: [ "/usr/local/ldap-sam-syncd/bin/lsyncd" ]
+    volumes:
+      - type: bind
+        read_only: true
+        source: ${LOCAL_SECRETS}
+        target: ${SECRETS_VOL}
+      - type: bind
+        source: ${LOCAL_BASE}/ldap-sam-syncd/dev/config
+        target: ${CONFIG_VOL}
+      - type: bind
+        source: ${LOCAL_BASE}/ldap-sam-syncd/dev/data
+        target: ${DATA_VOL}
+      - type: tmpfs
+        target: /tmp
+    env_file: .env
+    environment:
+      SERVICE: lsyncd
+

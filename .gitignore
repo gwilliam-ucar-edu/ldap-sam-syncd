@@ -1,0 +1,10 @@
+**/.DS_Store
+**/.#*
+**/#*#
+**/*~
+**/*.swp
+**/.bash_history
+**/.idea
+gendoc/**
+venv/**
+**/__pycache__

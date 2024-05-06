@@ -1,0 +1,220 @@
+#!/usr/bin/env python
+import sys, os, getopt, logging
+import pprintpp
+pprintpp.monkeypatch()
+import pprint
+from pathlib import Path
+from config import ConfigLoader
+from miscfuncs import truthy
+from syncrepl_client import Syncrepl
+
+PROG = "lsyncd"
+DESC = "LDAP syncrepl daemon for SAM"
+USAGE1 = PROG + " [-c|--configfile=<file>]"
+USAGE2 = PROG + " [-c|--configfile=<file>] --showconfig"
+USAGE3 = PROG + " -h|--help"
+USAGE = f'''Usage: {USAGE1}
+         or
+       {USAGE2}
+         or
+       {USAGE3}'''
+
+HELP_TEXT = f'''
+  -c|--configfile : Configuration ("ini") file. If not specified, the
+                    "CONFIG_INI" environment variable will be checked for the
+                    name of a file; otherwise, "./config.ini" is assumed. See
+                    Configuration below.
+  --showconfig    : Display the current configuration and exit.
+  -h|--help       : Display help test and quit
+
+    
+Configuration
+-------------
+The configuration should include an "[ldap]" section, a "[sam]" section, an
+"[lsyncd]" section, and a "[logging]" section.
+
+The "[ldap]" section must have a "host" key, and can have "port", "user", and
+"password" keys. The default value for "port" is 389. If the "user" key is
+omitted, anonymous authentication is used.
+
+The "[sam]" section must have "user" and "sam_password" keys, and can have
+"host", "port", and "path" keys; the default value of "host" is "sam.ucar.edu".
+The default value of "port" is "8443". The "path" value identifies the
+base path for the ldap synchronization endpoints; the default is
+"api/protected/ldapsync/v1".
+
+The "[lsyncd]" section can have an "lsyncd_data" key; the value is the path to
+a locally writable directory used by the syncrepl-client package. The default
+value is "/var/data/lsyncd".
+
+Entries in the "[logging]" sections will be used to configure loggers. See
+Logging Configuration below.
+
+Environment variables with names beginning with "LDAP_", or "SAM_" are treated
+as "secret" configuration variables that can be interpolated: the name of the
+configuration variable is the environment variable name converted to local
+case. For example, the environment variable "LDAP_PASSWORD" would become the
+configuration key "ldap_password". This allows secrets to be specified in the
+environment and accessed via interpolation without storing them in the
+configuration file itself.
+
+If the environment variable "SECRETS_DIR" is defined and it names a
+directory, that directory is searched for files with names beginning with
+"ldap_" and "sam_". The contents of those files are also treated as secret
+configuration values. The "LDAP_" and "SAM_" environment variables have
+precedence over SECRETS_DIR files.
+
+Logging Configuration
+---------------------
+In the "logging" section, entries with keys having no embedded '.' characters
+are passed directly to ``logging.basicConfig()``. However, only the "filename",
+"filemode", "format", "datefmt", "style", "level", and "encoding" keywords are
+supported. Other keys are split at the last '.'; the first substring is taken
+as the name of a logger, and the second must be one of the same
+``logging.basicConfig()`` keywords or "propagate" (which must be a boolean).
+For example, "sam.level" would identify the "level" value for a logger named
+"sam". All loggers referenced in this way are configured during runtime
+initialization.
+    '''
+
+def help():
+    help_text = f'''
+{PROG}: {DESC}
+{USAGE}
+
+{HELP_TEXT}
+    '''
+    print(help_text)
+
+def main(argv):
+    run_info = process_command_line_and_configuration(argv)
+
+    showconfig = run_info['showconfig']
+    combined_config = run_info['config']
+
+    ldap_config = combined_config['ldap']
+    sam_config = combined_config['sam']
+    lsyncd_config = combined_config['lsyncd']
+    logging_config = combined_config['logging']
+
+    if showconfig:
+        pp = pprint.PrettyPrinter(indent=4)
+        print("ldap:")
+        print(pp.pprint(ldap_config))
+        print("sam:")
+        print(pp.pprint(sam_config))
+        print("lsyncd:")
+        print(pp.pprint(lsyncd_config))
+        print("logging:")
+        print(pp.pprint(logging_config))
+        sys.exit(0)
+    
+    configure_logging(**logging_config)
+
+    logger = logging.getLogger(None)
+
+    logger.info('Starting ')
+
+    try:
+        synrepl_client = None;
+
+    except Exception as e:
+        logger.exception("Exception occurred")
+
+    logger.info('Exiting ' + PROG)
+
+def process_command_line_and_configuration(argv):
+    run_info = process_command_line(argv)
+    configfile = run_info['configfile']
+
+    config = ConfigLoader.loadConfig(configfile)
+
+    run_info['config'] = config
+
+    return run_info
+
+def process_command_line(argv):
+    argv.pop(0)
+    configfile = os.environ.get('CONFIG_INI','config.ini')
+    showconfig = False
+    try:
+        opts,args = getopt.getopt(argv,"hc:",
+                                  [
+                                      "help",
+                                      "configfile=",
+                                      "showconfig"])
+    except getopt.GetoptError as e:
+        prog_err(e)
+        print_err(USAGE)
+        sys.exit(2)
+
+    for opt, arg in opts:
+        if opt in ("-h","--help"):
+            help()
+            sys.exit(0)
+        elif opt in ("-c","--configfile"):
+            configfile = arg
+        elif opt in ("--showconfig"):
+            showconfig = True
+
+    if not Path(configfile).is_file():
+        prog_err(configfile + ": no such file")
+        sys.exit(2)
+
+    return {
+        'configfile': configfile,
+        'showconfig': showconfig
+    }
+
+
+def configure_logging(**config):
+    rootconfig = dict()
+    subconfigs = dict()
+    for key in config.keys():
+        value = config[key]
+        idx = key.rfind('.')
+        if idx > 0:
+            path = key[0:idx]
+            ckey = key[idx+1:]
+            subconfig = subconfigs.get(path,None)
+            if subconfig is None:
+                subconfig = dict()
+                subconfigs[path] = subconfig
+            subconfig[ckey] = value
+        else:
+            rootconfig[key] = value
+
+    if rootconfig:
+        logging.basicConfig(**rootconfig)
+    for path in subconfigs.keys():
+        subconfig = subconfigs[path]
+        configure_logger(path,subconfig)
+
+def configure_logger(name, config):
+    logger = logging.getLogger(name)
+    logger.propagate = truthy(config.get('propagate',"True"))
+    filename = config.get('filename',None)
+    if filename is not None:
+        filemode = config.get('filemode','a')
+        encoding = config.get('encoding',None)
+        handler = logging.FileHandler(filename,mode=filemode,encoding=encoding)
+        format = config.get('format',None)
+        datefmt = config.get('datefmt',None)
+        style = config.get('style','%')
+        formatter = logging.Formatter(fmt=format, datefmt=datefmt, style=style)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    level = config.get('level',None)
+    if level:
+        logger.setLevel(level)
+    
+    
+def print_err(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+def prog_err(*args, **kwargs):
+    sys.stderr.write(PROG + ": ")
+    print_err(*args, **kwargs)
+
+if __name__ == '__main__':
+    main(sys.argv)

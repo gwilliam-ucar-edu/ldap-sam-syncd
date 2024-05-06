@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ldap_sam_syncd"
+version = "0.0.1"
+authors = [
+  { name="George Williams", email="gwilliam@ucar.edu" },
+]
+description = "LDAP-to-SAM synchronization service"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    'sphinx',
+    'urllib3',
+    'syncrepl_client',
+]
+[project.urls]
+"Homepage" = "https://github.com/NCAR/ldap-sam-syncd"
+"AMIClient" = "https://github.com/akkornel/syncrepl"
+

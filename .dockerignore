@@ -1,0 +1,14 @@
+**/.DS_Store
+**/.#.*
+**/*~
+**/*.swp
+**/.bash_history
+.git
+.gitignore
+README.md
+gendoc/**
+venv/**
+**/__pycache__
+dev
+prod
+test
